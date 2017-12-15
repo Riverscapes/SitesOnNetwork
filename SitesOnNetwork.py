@@ -25,7 +25,8 @@ def CreateSiteMetricsProject(dirPath, metricSchemaName):
         raise 'The output directory path does not exist'
 
     realizationDir = os.path.join(dirPath, 'Outputs')
-    os.makedirs(realizationDir)
+    if not os.path.isdir(realizationDir):
+        os.makedirs(realizationDir)
 
     metricsShp = os.path.join(realizationDir, 'TopoMetrics.shp')
     metricsCSV = os.path.join(realizationDir, 'Metrics.csv')
@@ -62,6 +63,7 @@ def SitesOnANetwork(shpPath, metricCSVPath, metricSchemaName):
     # Make shp fields for each metric in our schema
     namevalmap = {
         'SiteName': 'SiteName',
+        'StreamName': 'StreamName',
         'Watershed': 'Watershed',
         'Latitude': 'Latitude',
         'Longitude': 'Longitude',
@@ -70,6 +72,7 @@ def SitesOnANetwork(shpPath, metricCSVPath, metricSchemaName):
     }
     outShape.createField('ID', ogr.OFTInteger)
     outShape.createField('SiteName', ogr.OFTString)
+    outShape.createField('StreamName', ogr.OFTString)
     outShape.createField('Watershed', ogr.OFTString)
     outShape.createField('Latitude', ogr.OFTReal)
     outShape.createField('Longitude', ogr.OFTReal)
@@ -133,6 +136,7 @@ def SitesOnANetwork(shpPath, metricCSVPath, metricSchemaName):
                             'geometry': Point(float(siteobj['longitude']), float(siteobj['latitude'])),
                             'fields': {
                                 'SiteName': siteobj['name'],
+                                'StreamName' : siteobj['locale'],
                                 'Watershed': shedurl[siteobj['watershedUrl']] if siteobj['watershedUrl'] in shedurl else "",
                                 'Latitude': float(siteobj['latitude']),
                                 'Longitude': float(siteobj['longitude']),
