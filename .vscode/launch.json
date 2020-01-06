@@ -22,6 +22,17 @@
                 "/Users/philip/GISData/CHaMP/workbench.db",
                 "Final - Visit Metrics 2018_02_16"
             ]
+        },
+        {
+            "name": "Import Site GAA",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/import_site_gaa.py",
+            "console": "integratedTerminal",
+            "args": [
+                "/Users/philip/GNAR/NARDrive/Projects/CHaMP/2020_MetricAndCovariates_subset.txt",
+                "/Users/philip/GISData/CHaMP/workbench.db"
+            ]
         }
     ]
 }

@@ -34,13 +34,45 @@ site_fields = {
     'VStatus': 'VisitStatus',
     'FishData': 'HasFishData',
     'Discharge': None,
-    'D84': None
+    'D84': None,
+    'ProgID':  'ProgramSiteID',
+    'Category':  None,
+    'Panel':  None,
+    'XAlbers':  None,
+    'YAlbers':  None,
+    'Elevation':  None,
+    'Block':  None,
+    'UseOrder':  None,
+    'Sample':  None,
+    'OwnerType':  None,
+    'Strah':  None,
+    'HUC4':  None,
+    'HUC5':  None,
+    'HUC6':  None,
+    'Level3NM':  None,
+    'Level4NM':  None,
+    'CECL1':  None,
+    'CECL2':  None,
+    'ValleyClss':  'ValleyClass',
+    'ChannelTyp':  'ChannelType',
+    'Ppt':  None,
+    'DistClass':  'DisturbedClassName',
+    'DistClssCd':  'DisturbedClassCode',
+    'DistPrin1':  None,
+    'NatClss':  'NatClassName',
+    'NattClssCd':  'NatClassCode',
+    'NatPrin1':  None,
+    'NatPrin2':  None,
+    'MeanU':  None,
+    'PriBedClss':  'PrimaryBedformClass',
+    'CUMDRAINAG':  None
 }
 
 def CreateSiteMetricsProject(dirPath, database, metricSchemaName):
     """
     Create a CHaMP Site Metrics project, including the point ShapeFile and project file
     :param dirPath: Directory where the project will be placed. Must exist already.
+    :param database: CHaMP Workbench SQLite database containing the metric values.
     :param metricSchemaName: Name of the metric schema that will be downloaded and used.
     :return: None
     """
@@ -66,7 +98,8 @@ def SitesOnANetwork(shpPath, metricCSVPath, database, metricSchemaName):
     Download metric values for a schema and write them to a ShapeFile and CSV file
     :param shpPath: Absolute path where the ShapeFile will get put. Must not exist already.
     :param metricCSVPath: Absolute path where the metrics will get written as a CSV
-    :param metricSchemaName: Name of the metric schema to download
+    :param database: CHaMP Workbench SQLite database that contains the metrics.
+    :param metricSchemaName: Name of the metric schema to download.
     :return: None
     """
 
@@ -81,7 +114,7 @@ def SitesOnANetwork(shpPath, metricCSVPath, database, metricSchemaName):
     # Load all the metric definitions for the specified schema
     metrics = {}
     unique_metrics = []
-    curs.execute('SELECT MD.MetricID, MD.Title, DisplayNameShort' +
+    curs.execute('SELECT MD.MetricID, MD.Title, DisplayNameShort, DataTypeID' +
         ' FROM Metric_Definitions MD' +
         ' INNER JOIN Metric_Schema_Definitions MSD ON MD.MetricID = MSD.MetricID' +
         ' INNER JOIN Metric_Schemas S ON MSD.SchemaID = S.SchemaID' +
@@ -100,14 +133,25 @@ def SitesOnANetwork(shpPath, metricCSVPath, database, metricSchemaName):
         metrics[row['MetricID']] = {
             'Name': name,
             'FullName': row['Title'],
-            'ShapeFile': shp
+            'ShapeFile': shp,
+            'DataType' : ogr.OFTReal if row['DataTypeID'] == 10023 else ogr.OFTString
         }
     
     # Verify that the ShapeFile field names are unique
     shpfields = [metric['ShapeFile'] for id, metric in metrics.items()]
+    print(len(shpfields), 'metrics loaded.')
     if len(shpfields) != len(set(shpfields)):
         raise 'Metric field names for the Shapefile are not unique'
 
+    # Output the metric names to a CSV file for reference
+    fieldCSV = os.path.splitext(shpPath)[0] + "_fields.csv"
+    with open(fieldCSV, 'w') as fieldCSVFile:
+        csvwriter = csv.writer(fieldCSVFile, delimiter=',', quoting=csv.QUOTE_MINIMAL)
+        csvwriter.writerow(['MetricID', 'Metric Name', 'Display Name Short', 'ShapeFile Field Name'])
+        for metricid, metric in metrics.items():
+            csvwriter.writerow([metricid, metric['FullName'], metric['Name'], metric['ShapeFile']])
+
+    # Load all the visits with their site information
     curs.execute('SELECT *' +
         ' FROM CHaMP_Visits V' +
         ' INNER JOIN CHaMP_Sites S ON V.SiteID = S.SiteID' +
@@ -131,24 +175,17 @@ def SitesOnANetwork(shpPath, metricCSVPath, database, metricSchemaName):
 
     print(len(visits), 'visits retrieved from the database')        
 
-    curs.execute('SELECT I.VisitID, MD.Title, MD.DisplayNameShort, VM.MetricValue' +
+    # Load all the metric values
+    curs.execute('SELECT I.VisitID, MetricID, MetricValue' +
         ' FROM Metric_Schemas S' +
         ' INNER JOIN Metric_Batches B ON S.SchemaID = B.SchemaID' +
         ' INNER JOIN Metric_Instances I ON B.BatchID = I.BatchID' +
-        ' INNER JOIN Metric_VisitMetrics VM ON I.InstanceID = VM.InstanceID' +
-        ' INNER JOIN Metric_Definitions MD ON VM.MetricID = MD.MetricID' +
+        ' INNER JOIN Metric_VisitMetrics VM ON I.InstanceID = VM.InstanceID'
         ' WHERE S.Title = "Final - Visit Metrics 2018_02_16"')
     for row in curs.fetchall():
         visitid = row['VisitID']
-        metric  = row['DisplayNameShort']
-
-        # Keep track of the full metric name as well as the 10 character version
-
-        visits[visitid][metric] = row['MetricValue']
-
-        if metric not in shp_fields:
-            shp_fields[metric] = ogr.OFTReal if isinstance(row['MetricValue'], float) else ogr.OFTString
-            metric_names[metric] = (row['Title'], metric[0:min(10, len(metric))])
+        metric  = metrics[row['MetricID']]
+        visits[visitid][metric['ShapeFile']] = row['MetricValue']
 
     print('Metric values loaded from the database')
 
@@ -160,16 +197,9 @@ def SitesOnANetwork(shpPath, metricCSVPath, database, metricSchemaName):
     outShape = Shapefile()
     outShape.create(shpPath, dest_srs, geoType=ogr.wkbPoint)
     [outShape.createField(field_name, field_type) for field_name, field_type in shp_fields.items()]
-    
+    [outShape.createField(metric['ShapeFile'], metric['DataType']) for metric in metrics.values()]
 
-    # Output the names to a CSV file so we can find them later
-    fieldCSV = os.path.splitext(shpPath)[0] + "_fields.csv"
-    with open(fieldCSV, 'w') as fieldCSVFile:
-        csvwriter = csv.writer(fieldCSVFile, delimiter=',', quoting=csv.QUOTE_MINIMAL)
-        csvwriter.writerow(['MetricID', 'Metric Name', 'Display Name Short', 'ShapeFile Field Name'])
-        for metricid, metric in metrics.items():
-            csvwriter.writerow([metricid, metric['FullName'], metric['Name'], metric['ShapeFile']])
-
+ 
     fieldCSV = os.path.splitext(shpPath)[0] + ".csv"
     with open(fieldCSV, 'w') as fieldCSVFile:
         csvwriter = csv.writer(fieldCSVFile, delimiter=',', quoting=csv.QUOTE_MINIMAL)
@@ -181,33 +211,18 @@ def SitesOnANetwork(shpPath, metricCSVPath, database, metricSchemaName):
                 csv_values.append(values[field] if field in values else None)
             csvwriter.writerow(csv_values)
             
-    print('CSV file written to', field)
+    print('CSV file written to', fieldCSV)
 
+    featureDefn = outShape.layer.GetLayerDefn()
+    for visit in visits.values():
 
-    # # Now it's time to write the shapefile:
-    # id = 1
-    # for vid, featObj in featuredict.iteritems():
+        outFeature = ogr.Feature(featureDefn)
+        geom = Point(float(visit['Longitude']), float(visit['Latitude']))
+        ogrPoint = ogr.CreateGeometryFromJson(json.dumps(mapping(geom)))
+        outFeature.SetGeometry(ogrPoint)
+        [outFeature.SetField(fieldName, fieldValue) for fieldName, fieldValue in visit.items() if fieldValue]
+        outShape.layer.CreateFeature(outFeature)
 
-    #     featureDefn = outShape.layer.GetLayerDefn()
-    #     outFeature = ogr.Feature(featureDefn)
-    #     ogrPolygon = ogr.CreateGeometryFromJson(json.dumps(mapping(featObj['geometry'])))
-    #     outFeature.SetGeometry(ogrPolygon)
-    #     outFeature.SetField('ID', id)
-
-    #     for fieldName, fieldValue in featObj['fields'].iteritems():
-    #         outFeature.SetField(namevalmap[fieldName], fieldValue)
-
-    #     outShape.layer.CreateFeature(outFeature)
-    #     id += 1
-
-    # # Now it's time to write the CSV file with metric values
-    # metricCSV = metricCSVPath
-    # with open(metricCSV, 'wb') as metricCSVFile:
-    #     csvwriter = csv.DictWriter(metricCSVFile, delimiter=',', quoting=csv.QUOTE_MINIMAL, fieldnames=featuredict[featuredict.keys()[0]]['fields'].keys())
-    #     csvwriter.writeheader()
-
-    #     for vid, featObj in featuredict.iteritems():
-    #         csvwriter.writerow(featObj['fields'])
 
 def SitesOnNetworkProject(dirPath, metricSchemaName, shpPath, csvPath):
     """
@@ -258,7 +273,7 @@ def SitesOnNetworkProject(dirPath, metricSchemaName, shpPath, csvPath):
     rough_string = ET.tostring(tree.getroot(), 'utf-8')
     reparsed = xml.dom.minidom.parseString(rough_string)
     pretty = reparsed.toprettyxml(indent="\t")
-    f = open(projectXMLPath, "wb")
+    f = open(projectXMLPath, "w")
     f.write(pretty)
     f.close()
 
